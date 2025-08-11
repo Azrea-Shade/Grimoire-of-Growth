@@ -1,4 +1,4 @@
-name: Android CI (Debug APK)
+name: Android CI (Debug APK, verbose logs)
 
 on:
   push:
@@ -22,20 +22,66 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android packages
+        shell: bash
         run: |
           sdkmanager --install "platform-tools" "platforms;android-31" "build-tools;31.0.0"
           yes | sdkmanager --licenses
 
-      - name: Setup Gradle 7.6 (no wrapper)
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "7.6"
+      # Install Gradle 7.6 via SDKMAN (no local wrapper needed)
+      - name: Install Gradle 7.6 (SDKMAN)
+        shell: bash
+        run: |
+          curl -s "https://get.sdkman.io" | bash
+          source "$HOME/.sdkman/bin/sdkman-init.sh"
+          sdk install gradle 7.6
+          gradle -v | tee gradle_version.log
 
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug
+      # Generate wrapper in CI so future steps can use ./gradlew
+      - name: Generate Gradle Wrapper 7.6 (if missing)
+        shell: bash
+        run: |
+          source "$HOME/.sdkman/bin/sdkman-init.sh"
+          if [ ! -f "./gradlew" ]; then
+            gradle wrapper --gradle-version 7.6 --distribution-type bin | tee wrapper_gen.log
+            chmod +x gradlew
+          else
+            echo "Wrapper already exists" | tee wrapper_gen.log
+          fi
 
+      # Catch the notorious "module(" misuse early with a clear error
+      - name: Sanity check for bad 'module(' usage
+        shell: bash
+        run: |
+          if grep -R "module(" -n .; then
+            echo "::error::Found 'module(' in Gradle files. Use \"module: 'name'\" syntax in exclude rules."
+            exit 1
+          fi
+
+      # Build and always capture the full log
+      - name: Build Debug APK (tee log)
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew :app:assembleDebug --stacktrace | tee gradle_build.log
+
+      # Upload APK only if build succeeded
       - name: Upload Debug APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Grimoire-of-Growth-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      # Upload logs & reports ALWAYS (even on failure)
+      - name: Upload logs and reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            gradle_build.log
+            wrapper_gen.log
+            gradle_version.log
+            **/build/reports/**
+            **/build/*.log
+            **/outputs/logs/**
