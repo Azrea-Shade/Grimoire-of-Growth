@@ -65,15 +65,23 @@ jobs:
           echo "=== outputs under app/build/outputs ===" | tee -a ci-logs/05_outputs.txt
           (find app/build/outputs -type f -print 2>/dev/null || true) | tee -a ci-logs/05_outputs.txt
 
-      # Upload artifacts so they're downloadable from Actions
+      # Show last ~200 lines of Gradle log right in the run Summary
+      - name: Summarize Gradle errors (ALWAYS)
+        if: always()
+        shell: bash
+        run: |
+          echo "### Gradle build tail" >> "$GITHUB_STEP_SUMMARY"
+          (tail -n 200 ci-logs/04_build.log 2>/dev/null || echo "(no build log)") >> "$GITHUB_STEP_SUMMARY"
+
+      # Upload APKs with broad globs (some AGP versions place them differently)
       - name: Upload Debug APK(s)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Grimoire-of-Growth-debug-${{ github.run_number }}
           path: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/bundle/debug/*.aab
+            app/build/outputs/**/*.apk
+            app/build/outputs/**/*.aab
           if-no-files-found: warn
           retention-days: 14
 
@@ -96,11 +104,8 @@ jobs:
           SHORT_SHA="${GITHUB_SHA::7}"
           RUN_DIR="v${APP_VERSION}/${GITHUB_REF_NAME}/${DATE}/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}_${TIME}_${SHORT_SHA}"
           echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
-          echo "date=$DATE" >> "$GITHUB_OUTPUT"
-          echo "time=$TIME" >> "$GITHUB_OUTPUT"
-          echo "sha7=$SHORT_SHA" >> "$GITHUB_OUTPUT"
 
-      # Commit BOTH logs and APK(s) into ci-logs branch under {logs,apk}
+      # Commit BOTH logs and APKs to ci-logs branch under {logs,apk}
       - name: Push logs + APKs to ci-logs (organized)
         if: always()
         shell: bash
@@ -108,14 +113,10 @@ jobs:
         run: |
           RUN_DIR="${{ steps.meta.outputs.run_dir }}"
           STAGE=".stage-publish"; rm -rf "$STAGE"; mkdir -p "$STAGE/logs" "$STAGE/apk"
-
-          # copy logs
           cp -r ci-logs/* "$STAGE/logs/" 2>/dev/null || true
-          # copy APKs if present
-          (ls app/build/outputs/apk/debug/*.apk >/dev/null 2>&1 && cp app/build/outputs/apk/debug/*.apk "$STAGE/apk/") || true
-          (ls app/build/outputs/bundle/debug/*.aab >/dev/null 2>&1 && cp app/build/outputs/bundle/debug/*.aab "$STAGE/apk/") || true
+          (ls app/build/outputs/**/*.apk >/dev/null 2>&1 && cp app/build/outputs/**/*.apk "$STAGE/apk/") || true
+          (ls app/build/outputs/**/*.aab >/dev/null 2>&1 && cp app/build/outputs/**/*.aab "$STAGE/apk/") || true
 
-          # publish
           git config user.name "CI Logs Bot"
           git config user.email "actions@users.noreply.github.com"
           git fetch origin ci-logs || true
@@ -127,15 +128,13 @@ jobs:
           git commit -m "artifacts: ${RUN_DIR} (logs + apk)" || true
           git push origin ci-logs || true
 
-      # Show a clickable summary in the run page
       - name: Summary (paths)
         if: always()
         shell: bash
         run: |
-          echo "### Artifacts & Logs" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Logs branch path:** \`ci-logs/${{ steps.meta.outputs.run_dir }}/logs/\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **APK branch path:**  \`ci-logs/${{ steps.meta.outputs.run_dir }}/apk/\`"  >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Actions artifacts:** \`Grimoire-of-Growth-debug-${{ github.run_number }}\`, \`build-logs-${{ github.run_number }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Artifacts & Paths" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Logs: \`ci-logs/${{ steps.meta.outputs.run_dir }}/logs/\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APKs: \`ci-logs/${{ steps.meta.outputs.run_dir }}/apk/\`"  >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if something failed
         if: always()
