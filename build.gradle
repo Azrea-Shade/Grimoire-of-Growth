@@ -1,0 +1,2 @@
+// Root build file — plugin declared in settings.gradle
+tasks.register("clean", Delete) { delete(rootProject.buildDir) }
