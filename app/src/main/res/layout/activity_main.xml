@@ -7,10 +7,9 @@
 
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/topAppBar"
-        style="?attr/materialToolbarStyle"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:title="🔮 Grimoire of Growth"
+        android:title="@string/app_name"
         app:layout_scrollFlags="scroll|enterAlways" />
 
     <androidx.recyclerview.widget.RecyclerView
