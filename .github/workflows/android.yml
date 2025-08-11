@@ -1,4 +1,4 @@
-name: Android CI (Debug APK, logs no matter what)
+name: Android CI (Debug APK, always logs)
 
 permissions:
   contents: write
@@ -14,7 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare log dir (always)
+      - name: Prepare log dir
         run: |
           mkdir -p ci-logs
           echo "run started: $(date -u)" | tee ci-logs/00_run.txt
@@ -30,19 +30,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
+      # Install SDK + packages via the action itself (less flaky than manual sdkmanager)
+      - name: Setup Android SDK + packages
         uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
+            platforms;android-31
+            build-tools;31.0.0
 
-      - name: Install Android packages
-        shell: bash
-        run: |
-          set -o pipefail
-          {
-            sdkmanager --install "platform-tools" "platforms;android-31" "build-tools;31.0.0"
-            yes | sdkmanager --licenses
-          } |& tee -a ci-logs/01_android-sdk.log
-
-      # Use Gradle 7.6 without relying on local wrapper
       - name: Setup Gradle 7.6
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -52,8 +48,7 @@ jobs:
         shell: bash
         run: |
           if grep -R "module(" -n .; then
-            echo "::error::Found 'module(' in Gradle files. Use \"module: 'name'\" syntax in excludes."
-            # continue; logs will show this and final step will fail job
+            echo "::warning::Found 'module(' in Gradle files. Use \"module: 'name'\" in excludes."
           fi
 
       - name: Build Debug APK (capture log)
@@ -61,11 +56,11 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
+          gradle -v |& tee -a ci-logs/02_gradle-version.log
           gradle :app:assembleDebug --stacktrace |& tee -a ci-logs/04_build.log
           echo "${PIPESTATUS[0]}" > ci-logs/04_build.exit
 
-      # Only upload APK if it actually exists
-      - name: Upload Debug APK
+      - name: Upload Debug APK (if it exists)
         if: ${{ hashFiles('app/build/outputs/apk/debug/app-debug.apk') != '' }}
         uses: actions/upload-artifact@v4
         with:
@@ -73,23 +68,19 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: warn
 
-      # Always upload logs so you have something to send me
       - name: Upload logs (ALWAYS)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: |
-            ci-logs/**
-            **/build/reports/**
-            **/build/*.log
-            **/outputs/logs/**
+          path: ci-logs/**
           if-no-files-found: warn
+          retention-days: 7
 
-      # Also push logs into a branch so you can view them in the app
-      - name: Push logs to ci-logs branch (ALWAYS)
+      - name: Push logs to ci-logs branch (best effort)
         if: always()
         shell: bash
+        continue-on-error: true
         run: |
           RUN_DIR="runs/${{ github.run_id }}"
           git config user.name "CI Logs Bot"
@@ -99,20 +90,14 @@ jobs:
           mkdir -p "$RUN_DIR"
           cp -r ci-logs/* "$RUN_DIR"/
           git add -A
-          git commit -m "logs: run ${{ github.run_id }} on ${{ github.ref_name }} @ ${{ github.sha }}" || echo "no changes to commit"
-          git push origin ci-logs
+          git commit -m "logs: run ${{ github.run_id }} on ${{ github.ref_name }} @ ${{ github.sha }}" || true
+          git push origin ci-logs || true
 
-      # Fail the job if the build step actually failed
-      - name: Finalize result
+      - name: Fail if build failed
         if: always()
         shell: bash
         run: |
-          code=0
-          if [ -f ci-logs/04_build.exit ]; then
-            exitcode="$(cat ci-logs/04_build.exit || echo 0)"
-            if [ "$exitcode" != "0" ]; then
-              echo "::error::Build failed, exit=$exitcode (see ci-logs/04_build.log)"
-              code=1
-            fi
+          if [ -f ci-logs/04_build.exit ] && [ "$(cat ci-logs/04_build.exit)" != "0" ]; then
+            echo "::error::Build failed (see build-logs artifact or ci-logs branch)"
+            exit 1
           fi
-          exit $code
