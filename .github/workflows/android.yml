@@ -1,4 +1,4 @@
-name: Android CI (Debug APK, organized APK/LOGS branch artifacts)
+name: Android CI (Debug APK, organized branch artifacts)
 
 permissions:
   contents: write
@@ -38,9 +38,7 @@ jobs:
           set -o pipefail
           tries=0
           until [ $tries -ge 3 ]; do
-            { sdkmanager --install \
-                "platform-tools" \
-                "platforms;android-34" "build-tools;34.0.0"; } |& tee -a ci-logs/01_android-sdk.log
+            { sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"; } |& tee -a ci-logs/01_android-sdk.log
             code=${PIPESTATUS[0]}; echo "$code" > ci-logs/01_android-sdk.exit
             [ $code -eq 0 ] && break
             tries=$((tries+1)); echo "retry $tries/3 in 5s…" | tee -a ci-logs/01_android-sdk.log; sleep 5
@@ -66,16 +64,6 @@ jobs:
         run: |
           echo "=== outputs under app/build/outputs ===" | tee -a ci-logs/05_outputs.txt
           (find app/build/outputs -type f -print 2>/dev/null || true) | tee -a ci-logs/05_outputs.txt
-
-      - name: Summarize Gradle errors (ALWAYS)
-        if: always()
-        shell: bash
-        run: |
-          echo "### Gradle build tail" >> "$GITHUB_STEP_SUMMARY"
-          (tail -n 200 ci-logs/04_build.log 2>/dev/null || echo "(no build log)") >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Quick grep (errors/warnings)" >> "$GITHUB_STEP_SUMMARY"
-          (grep -nE "Duplicate class|error:|FAILURE:|Manifest merger failed|AAPT: error|requires libraries and applications" ci-logs/04_build.log 2>/dev/null || echo "(no matches)") >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Debug APK(s)
         if: always()
@@ -112,12 +100,14 @@ jobs:
         shell: bash
         continue-on-error: true
         run: |
+          set -o pipefail
           RUN_DIR="${{ steps.meta.outputs.run_dir }}"
           STAGE=".stage-publish"; rm -rf "$STAGE"; mkdir -p "$STAGE/LOGS" "$STAGE/APK"
           cp -r ci-logs/* "$STAGE/LOGS/" 2>/dev/null || true
           (ls app/build/outputs/**/*.apk >/dev/null 2>&1 && cp app/build/outputs/**/*.apk "$STAGE/APK/") || echo "APK missing (build failed)" > "$STAGE/APK/README.txt"
           (ls app/build/outputs/**/*.aab >/dev/null 2>&1 && cp app/build/outputs/**/*.aab "$STAGE/APK/") || true
 
+          # verbose git push, capture status/log
           git config user.name "CI Logs Bot"
           git config user.email "actions@users.noreply.github.com"
           git fetch origin ci-logs || true
@@ -127,15 +117,21 @@ jobs:
           cp -r "$STAGE/APK/"*  "${RUN_DIR}/APK/"  2>/dev/null || true
           git add -A
           git commit -m "artifacts: ${RUN_DIR} (APK + LOGS)" || true
-          git push origin ci-logs || true
+          git status > ci-logs/06_publish.status 2>&1 || true
+          git log -1 --oneline >> ci-logs/06_publish.status 2>&1 || true
+          git push origin ci-logs 2>&1 | tee ci-logs/06_publish.log
+          echo ${PIPESTATUS[0]} > ci-logs/06_publish.exit
 
-      - name: Summary (paths)
+      - name: Summary (paths + tail)
         if: always()
         shell: bash
         run: |
+          echo "### Gradle build tail" >> "$GITHUB_STEP_SUMMARY"
+          (tail -n 200 ci-logs/04_build.log 2>/dev/null || echo "(no build log)") >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "### Artifacts & Paths" >> "$GITHUB_STEP_SUMMARY"
-          echo "- LOGS: \`ci-logs/${{ steps.meta.outputs.run_dir }}/LOGS/\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- APK:  \`ci-logs/${{ steps.meta.outputs.run_dir }}/APK/\`"  >> "$GITHUB_STEP_SUMMARY"
+          echo "- LOGS: ci-logs/${{ steps.meta.outputs.run_dir }}/LOGS/" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APK:  ci-logs/${{ steps.meta.outputs.run_dir }}/APK/"  >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fail if something failed
         if: always()
