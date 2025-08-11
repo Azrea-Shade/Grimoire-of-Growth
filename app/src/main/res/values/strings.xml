@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Grimoire of Growth</string>
+    <string name="add_habit">Add habit</string>
+    <string name="habit_name">Habit name</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="rename">Rename</string>
+    <string name="delete">Delete</string>
+    <string name="confirm_delete">Delete habit?</string>
+    <string name="yes_delete">Delete</string>
+    <string name="no">No</string>
+    <string name="done_today">Done today</string>
+</resources>
