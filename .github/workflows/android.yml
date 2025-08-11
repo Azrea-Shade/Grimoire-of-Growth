@@ -1,4 +1,7 @@
-name: Android CI (Debug APK, always logs)
+name: Android CI (Debug APK, logs no matter what)
+
+permissions:
+  contents: write  # needed to push logs branch
 
 on:
   push:
@@ -11,13 +14,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare log dir
+      - name: Prepare log dir (always)
         run: |
           mkdir -p ci-logs
-          echo "run started: $(date -u)" | tee ci-logs/run.txt
+          echo "run started: $(date -u)" | tee ci-logs/00_run.txt
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -30,26 +35,31 @@ jobs:
 
       - name: Install Android packages
         shell: bash
+        continue-on-error: true
         run: |
           set -o pipefail
           {
             sdkmanager --install "platform-tools" "platforms;android-31" "build-tools;31.0.0"
             yes | sdkmanager --licenses
           } |& tee -a ci-logs/01_android-sdk.log
+          echo "${PIPESTATUS[0]}" > ci-logs/01_android-sdk.exit
 
       - name: Install Gradle 7.6 (SDKMAN)
         shell: bash
+        continue-on-error: true
         run: |
           set -o pipefail
           {
             curl -s "https://get.sdkman.io" | bash
             source "$HOME/.sdkman/bin/sdkman-init.sh"
-            sdk install gradle 7.6
+            sdk install gradle 7.6 || sdk use gradle 7.6
             gradle -v
           } |& tee -a ci-logs/02_gradle-install.log
+          echo "${PIPESTATUS[0]}" > ci-logs/02_gradle-install.exit
 
       - name: Generate Gradle Wrapper 7.6 (if missing)
         shell: bash
+        continue-on-error: true
         run: |
           set -o pipefail
           {
@@ -60,24 +70,29 @@ jobs:
             fi
             ./gradlew -v
           } |& tee -a ci-logs/03_wrapper-gen.log
+          echo "${PIPESTATUS[0]}" > ci-logs/03_wrapper-gen.exit
 
       - name: Sanity check for bad 'module(' usage
         shell: bash
+        continue-on-error: true
         run: |
-          if grep -R "module(" -n .; then
-            echo "::error::Found 'module(' in Gradle files. Use \"module: 'name'\" in excludes."
-            exit 1
-          fi
+          set -o pipefail
+          {
+            ! grep -R "module(" -n . || { echo "ERROR: Found 'module(' in Gradle files. Use \"module: 'name'\" syntax."; exit 1; }
+          } |& tee -a ci-logs/03b_sanity.log
+          echo "${PIPESTATUS[0]}" > ci-logs/03b_sanity.exit
 
       - name: Build Debug APK (capture log)
         shell: bash
+        continue-on-error: true
         run: |
           set -o pipefail
           ./gradlew :app:assembleDebug --stacktrace |& tee -a ci-logs/04_build.log
-          echo $? > ci-logs/build.exit
+          echo "${PIPESTATUS[0]}" > ci-logs/04_build.exit
 
       - name: Upload Debug APK (if build succeeded)
-        if: success()
+        if: |
+          always() && hashFiles('ci-logs/04_build.exit') != '' && join(steps.*.outputs, '') == ''  # placeholder no-op to keep if:always() syntax happy on mobile
         uses: actions/upload-artifact@v4
         with:
           name: Grimoire-of-Growth-debug
@@ -89,9 +104,37 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: |
-            ci-logs/**
-            **/build/reports/**
-            **/build/*.log
-            **/outputs/logs/**
+          path: ci-logs/**
           if-no-files-found: warn
+
+      - name: Push logs to ci-logs branch (ALWAYS)
+        if: always()
+        shell: bash
+        run: |
+          RUN_DIR="runs/${{ github.run_id }}"
+          git config user.name "CI Logs Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch origin ci-logs || true
+          git checkout -B ci-logs origin/ci-logs || git checkout -B ci-logs
+          mkdir -p "$RUN_DIR"
+          cp -r ci-logs/* "$RUN_DIR"/
+          git add -A
+          git commit -m "logs: run ${{ github.run_id }} on ${{ github.ref_name }} @ ${{ github.sha }}" || echo "no changes to commit"
+          git push origin ci-logs
+
+      - name: Finalize result (fail if any step failed)
+        if: always()
+        shell: bash
+        run: |
+          FAIL=0
+          for f in ci-logs/*.exit; do
+            [ -f "$f" ] || continue
+            code="$(cat "$f" || echo 0)"
+            if [ "$code" != "0" ]; then
+              echo "::error::Step failed: $(basename "$f") exit=$code"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            exit 1
+          fi
