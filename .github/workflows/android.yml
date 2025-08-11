@@ -17,50 +17,37 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-      # create logs folder AFTER checkout so it doesn't get wiped
       - name: Prepare log dir
-        shell: bash
         run: |
           mkdir -p ci-logs
           echo "run started: $(date -u)" | tee ci-logs/00_run.txt
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
+        with: { distribution: temurin, java-version: "17" }
 
       - name: Setup Android SDK (base)
         uses: android-actions/setup-android@v3
 
       - name: Install Android packages (logged + retry)
         shell: bash
-        continue-on-error: true
         run: |
           set -o pipefail
           tries=0
           until [ $tries -ge 3 ]; do
-            {
-              sdkmanager --install "platform-tools" "platforms;android-31" "build-tools;31.0.0"
-            } |& tee -a ci-logs/01_android-sdk.log
-            code=${PIPESTATUS[0]}
-            echo "$code" > ci-logs/01_android-sdk.exit
+            { sdkmanager --install "platform-tools" "platforms;android-31" "build-tools;31.0.0"; } |& tee -a ci-logs/01_android-sdk.log
+            code=${PIPESTATUS[0]}; echo "$code" > ci-logs/01_android-sdk.exit
             [ $code -eq 0 ] && break
-            tries=$((tries+1))
-            echo "retry $tries/3 in 5s…" | tee -a ci-logs/01_android-sdk.log
-            sleep 5
+            tries=$((tries+1)); echo "retry $tries/3 in 5s…" | tee -a ci-logs/01_android-sdk.log; sleep 5
           done
           yes | sdkmanager --licenses |& tee -a ci-logs/01_android-sdk.log || true
 
       - name: Setup Gradle 7.6
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "7.6"
+        with: { gradle-version: "7.6" }
 
       - name: Build Debug APK (capture log)
         shell: bash
@@ -71,12 +58,23 @@ jobs:
           gradle :app:assembleDebug --stacktrace |& tee -a ci-logs/04_build.log
           echo "${PIPESTATUS[0]}" > ci-logs/04_build.exit
 
-      - name: Upload Debug APK (if present)
-        if: ${{ hashFiles('app/build/outputs/apk/debug/app-debug.apk') != '' }}
+      # ➕ added: list outputs for visibility (no behavioral change)
+      - name: List build outputs (ALWAYS)
+        if: always()
+        shell: bash
+        run: |
+          echo "=== outputs under app/build/outputs ===" | tee -a ci-logs/05_outputs.txt
+          (find app/build/outputs -type f -print 2>/dev/null || true) | tee -a ci-logs/05_outputs.txt
+
+      # ➕ added: always try to upload APK(s); warns if none (no impact on build)
+      - name: Upload Debug APK(s)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Grimoire-of-Growth-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Grimoire-of-Growth-debug-${{ github.run_number }}
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/bundle/debug/*.aab
           if-no-files-found: warn
           retention-days: 14
 
@@ -84,7 +82,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs
+          name: build-logs-${{ github.run_number }}
           path: ci-logs/**
           if-no-files-found: warn
           retention-days: 14
@@ -98,24 +96,14 @@ jobs:
           TIME="$(date -u +%H%M%SZ)"
           SHORT_SHA="${GITHUB_SHA::7}"
           RUN_DIR="v${APP_VERSION}/${GITHUB_REF_NAME}/${DATE}/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}_${TIME}_${SHORT_SHA}"
-
-          # write structured metadata
           cat > ci-logs/meta.json <<META
           { "version":"${APP_VERSION}", "branch":"${GITHUB_REF_NAME}", "run_id":"${GITHUB_RUN_ID}",
             "run_number":"${GITHUB_RUN_NUMBER}", "commit":"${GITHUB_SHA}", "utc":"$(date -u +%FT%TZ)" }
           META
-
           git config user.name "CI Logs Bot"
           git config user.email "actions@users.noreply.github.com"
-
           git fetch origin ci-logs || true
-          if git rev-parse --verify origin/ci-logs >/dev/null 2>&1; then
-            git checkout -B ci-logs origin/ci-logs
-          else
-            git checkout --orphan ci-logs
-            git reset --hard
-          fi
-
+          git checkout -B ci-logs origin/ci-logs || git checkout -B ci-logs
           mkdir -p "$RUN_DIR"
           cp -r ci-logs/* "$RUN_DIR"/
           git add -A
