@@ -38,7 +38,10 @@ jobs:
           set -o pipefail
           tries=0
           until [ $tries -ge 3 ]; do
-            { sdkmanager --install "platform-tools" "platforms;android-31" "build-tools;31.0.0"; } |& tee -a ci-logs/01_android-sdk.log
+            { sdkmanager --install \
+                "platform-tools" \
+                "platforms;android-31" "build-tools;31.0.0" \
+                "platforms;android-33" "build-tools;33.0.2"; } |& tee -a ci-logs/01_android-sdk.log
             code=${PIPESTATUS[0]}; echo "$code" > ci-logs/01_android-sdk.exit
             [ $code -eq 0 ] && break
             tries=$((tries+1)); echo "retry $tries/3 in 5s…" | tee -a ci-logs/01_android-sdk.log; sleep 5
@@ -65,7 +68,6 @@ jobs:
           echo "=== outputs under app/build/outputs ===" | tee -a ci-logs/05_outputs.txt
           (find app/build/outputs -type f -print 2>/dev/null || true) | tee -a ci-logs/05_outputs.txt
 
-      # Show last ~200 lines of Gradle log right in the run Summary
       - name: Summarize Gradle errors (ALWAYS)
         if: always()
         shell: bash
@@ -73,7 +75,6 @@ jobs:
           echo "### Gradle build tail" >> "$GITHUB_STEP_SUMMARY"
           (tail -n 200 ci-logs/04_build.log 2>/dev/null || echo "(no build log)") >> "$GITHUB_STEP_SUMMARY"
 
-      # Upload APKs with broad globs (some AGP versions place them differently)
       - name: Upload Debug APK(s)
         if: always()
         uses: actions/upload-artifact@v4
@@ -94,7 +95,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Compute organized run directory and expose it as outputs
       - name: Compute run path
         id: meta
         shell: bash
@@ -105,7 +105,6 @@ jobs:
           RUN_DIR="v${APP_VERSION}/${GITHUB_REF_NAME}/${DATE}/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ID}_${TIME}_${SHORT_SHA}"
           echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
-      # Commit BOTH logs and APKs to ci-logs branch under {logs,apk}
       - name: Push logs + APKs to ci-logs (organized)
         if: always()
         shell: bash
