@@ -1,143 +1,108 @@
-name: Android CI (Debug APK, organized branch artifacts)
+name: Android CI (mvp → ci-logs + artifacts)
+
+on:
+  push:
+    branches: [ "mvp" ]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-on:
-  push:
-    branches: [ "main", "mvp", "feature/**" ]
-  pull_request:
-    branches: [ "main", "mvp", "feature/**" ]
-  workflow_dispatch:
-
 env:
-  APP_VERSION: "1.0.0"
+  JAVA_VERSION: "17"
+  GRADLEW: "./gradlew"
+  LOGS_BRANCH: "ci-logs"
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Prepare log dir
-        run: |
-          mkdir -p ci-logs
-          echo "run started: $(date -u)" | tee ci-logs/00_run.txt
-
-      - name: Setup JDK 17
+      - name: Set up Temurin JDK
         uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "17" }
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Make gradlew executable
+        run: chmod +x $GRADLEW || true
 
-      - name: Install Android packages (logged + retry)
-        shell: bash
+      - name: Build debug & capture log
+        id: buildstep
         run: |
-          set -o pipefail
-          tries=0
-          until [ $tries -ge 3 ]; do
-            { sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"; } |& tee -a ci-logs/01_android-sdk.log
-            code=${PIPESTATUS[0]}; echo "$code" > ci-logs/01_android-sdk.exit
-            [ $code -eq 0 ] && break
-            tries=$((tries+1)); echo "retry $tries/3 in 5s…" | tee -a ci-logs/01_android-sdk.log; sleep 5
+          set -euo pipefail
+          mkdir -p out/LOGS out/APK
+          $GRADLEW --no-daemon --stacktrace --info assembleDebug 2>&1 | tee out/LOGS/gradle.log
+
+          # Collect APK/AAB/JSON/XML from all modules
+          shopt -s globstar nullglob
+          for f in **/build/outputs/**/*.apk **/build/outputs/**/*.aab **/build/outputs/**/*.json **/build/outputs/**/*.xml; do
+            [ -f "$f" ] && cp -f "$f" out/APK/
           done
-          yes | sdkmanager --licenses |& tee -a ci-logs/01_android-sdk.log || true
+          shopt -u globstar nullglob
 
-      - name: Setup Gradle 7.6
-        uses: gradle/actions/setup-gradle@v4
-        with: { gradle-version: "7.6" }
+          # Compute version string
+          V=$(grep -RhoE 'versionName\s*"?=?"?[^"]+"' --include='build.gradle*' . | head -n1 | sed -E 's/.*versionName\s*"?=?"?([^"]+)".*/\1/' || true)
+          [ -z "$V" ] && V=$(git describe --tags --always 2>/dev/null || true)
+          [ -z "$V" ] && V="0.0.0"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
 
-      - name: Build Debug APK (capture log)
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          gradle -v |& tee -a ci-logs/02_gradle-version.log
-          gradle :app:assembleDebug --stacktrace |& tee -a ci-logs/04_build.log
-          echo "${PIPESTATUS[0]}" > ci-logs/04_build.exit
+          {
+            echo "version: $V"
+            echo "branch:  ${GITHUB_REF_NAME}"
+            echo "commit:  ${GITHUB_SHA}"
+            echo "run:     ${GITHUB_RUN_NUMBER}"
+            echo "time:    $(date -u +%FT%TZ)"
+          } > out/LOGS/run-manifest.txt
 
-      - name: List build outputs (ALWAYS)
-        if: always()
-        shell: bash
-        run: |
-          echo "=== outputs under app/build/outputs ===" | tee -a ci-logs/05_outputs.txt
-          (find app/build/outputs -type f -print 2>/dev/null || true) | tee -a ci-logs/05_outputs.txt
-
-      - name: Upload Debug APK(s)
+      - name: Upload LOGS artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Grimoire-of-Growth-debug-${{ github.run_number }}
-          path: |
-            app/build/outputs/**/*.apk
-            app/build/outputs/**/*.aab
+          name: logs-${{ github.run_number }}-v{{ env.VERSION }}
+          path: out/LOGS/**
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
 
-      - name: Upload logs (ALWAYS)
+      - name: Upload APKs artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-logs-${{ github.run_number }}
-          path: ci-logs/**
+          name: apks-${{ github.run_number }}-v{{ env.VERSION }}
+          path: out/APK/**
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
 
-      - name: Compute run path
-        id: meta
-        shell: bash
+      - name: Push LOGS + APKs to ci-logs
+        if: always()
         run: |
+          set -euo pipefail
+          git ls-remote --exit-code --heads origin "${LOGS_BRANCH}"
+
           DATE="$(date -u +%Y-%m-%d)"
           TIME="$(date -u +%H%M%SZ)"
           SHORT_SHA="${GITHUB_SHA::7}"
-          RUN_DIR="runs/v${APP_VERSION}/${GITHUB_REF_NAME}/${DATE}/run-${GITHUB_RUN_NUMBER}_${TIME}_${SHORT_SHA}"
-          echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
+          RUN_DIR="runs/v${VERSION}/${GITHUB_REF_NAME}/run-${GITHUB_RUN_NUMBER}_${TIME}_${SHORT_SHA}"
+          echo "RUN_DIR=${RUN_DIR}"
 
-      - name: Push APK & LOGS to ci-logs (organized)
-        if: always()
-        shell: bash
-        continue-on-error: true
-        run: |
-          set -o pipefail
-          RUN_DIR="${{ steps.meta.outputs.run_dir }}"
-          STAGE=".stage-publish"; rm -rf "$STAGE"; mkdir -p "$STAGE/LOGS" "$STAGE/APK"
-          cp -r ci-logs/* "$STAGE/LOGS/" 2>/dev/null || true
-          (ls app/build/outputs/**/*.apk >/dev/null 2>&1 && cp app/build/outputs/**/*.apk "$STAGE/APK/") || echo "APK missing (build failed)" > "$STAGE/APK/README.txt"
-          (ls app/build/outputs/**/*.aab >/dev/null 2>&1 && cp app/build/outputs/**/*.aab "$STAGE/APK/") || true
+          git config user.name  "CI Bot"
+          git config user.email "ci-bot@users.noreply.github.com"
 
-          # verbose git push, capture status/log
-          git config user.name "CI Logs Bot"
-          git config user.email "actions@users.noreply.github.com"
-          git fetch origin ci-logs || true
-          git checkout -B ci-logs origin/ci-logs || git checkout -B ci-logs
-          mkdir -p "${RUN_DIR}/LOGS" "${RUN_DIR}/APK"
-          cp -r "$STAGE/LOGS/"* "${RUN_DIR}/LOGS/" 2>/dev/null || true
-          cp -r "$STAGE/APK/"*  "${RUN_DIR}/APK/"  2>/dev/null || true
-          git add -A
-          git commit -m "artifacts: ${RUN_DIR} (APK + LOGS)" || true
-          git status > ci-logs/06_publish.status 2>&1 || true
-          git log -1 --oneline >> ci-logs/06_publish.status 2>&1 || true
-          git push origin ci-logs 2>&1 | tee ci-logs/06_publish.log
-          echo ${PIPESTATUS[0]} > ci-logs/06_publish.exit
+          WT="$(mktemp -d)"
+          git fetch origin "${LOGS_BRANCH}"
+          git worktree add -B "${LOGS_BRANCH}" "${WT}" "origin/${LOGS_BRANCH}"
 
-      - name: Summary (paths + tail)
-        if: always()
-        shell: bash
-        run: |
-          echo "### Gradle build tail" >> "$GITHUB_STEP_SUMMARY"
-          (tail -n 200 ci-logs/04_build.log 2>/dev/null || echo "(no build log)") >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### Artifacts & Paths" >> "$GITHUB_STEP_SUMMARY"
-          echo "- LOGS: ci-logs/${{ steps.meta.outputs.run_dir }}/LOGS/" >> "$GITHUB_STEP_SUMMARY"
-          echo "- APK:  ci-logs/${{ steps.meta.outputs.run_dir }}/APK/"  >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p "${WT}/${RUN_DIR}/LOGS" "${WT}/${RUN_DIR}/APK"
+          cp -a out/LOGS/. "${WT}/${RUN_DIR}/LOGS/" || true
+          if ls out/APK/* >/dev/null 2>&1; then
+            cp -a out/APK/. "${WT}/${RUN_DIR}/APK/" || true
+          else
+            echo "no debug APK/AAB produced in this run" > "${WT}/${RUN_DIR}/APK/README.txt"
+          fi
 
-      - name: Fail if something failed
-        if: always()
-        shell: bash
-        run: |
-          fail=0
-          [ -f ci-logs/01_android-sdk.exit ] && [ "$(cat ci-logs/01_android-sdk.exit)" != "0" ] && fail=1
-          [ -f ci-logs/04_build.exit ] && [ "$(cat ci-logs/04_build.exit)" != "0" ] && fail=1
-          exit $fail
+          (cd "${WT}" && git add . && git commit -m "ci: ${GITHUB_REF_NAME} #${GITHUB_RUN_NUMBER} v${VERSION} (${GITHUB_SHA::7})" || true)
+          (cd "${WT}" && git push origin "${LOGS_BRANCH}")
