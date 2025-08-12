@@ -1,0 +1,3 @@
+<resources>
+  <style name="Theme.Grimoire.DayNight" parent="Theme.MaterialComponents.DayNight.NoActionBar"/>
+</resources>

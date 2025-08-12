@@ -1,0 +1,35 @@
+apply plugin: 'com.android.application'
+
+android {
+  namespace "com.azreashade.grimoireofgrowth"
+  compileSdk 33
+
+  defaultConfig {
+    applicationId "com.azreashade.grimoireofgrowth"
+    minSdk 26
+    targetSdk 31
+    versionCode 1
+    versionName "1.0.0"
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+  }
+
+  buildTypes {
+    debug { }
+    release {
+      minifyEnabled false
+      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+    }
+  }
+}
+
+dependencies {
+  implementation 'androidx.appcompat:appcompat:1.6.1'
+  implementation 'com.google.android.material:material:1.9.0'
+  implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+  // Lock Activity below 1.8 so compileSdk 33 is OK
+  implementation 'androidx.activity:activity:1.6.1'
+}

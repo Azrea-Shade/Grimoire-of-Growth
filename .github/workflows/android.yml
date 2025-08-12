@@ -1,0 +1,68 @@
+name: Android CI (main/release/testing → artifacts)
+
+on:
+  push:
+    branches:
+      - "main"
+      - "release/v1.0"
+      - "testing/v1.0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JAVA_VERSION: "11"            # AGP 7.4.2 requires JDK 11
+      COMPILE_SDK: "33"
+      BUILD_TOOLS: "33.0.2"
+
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Set up Temurin JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platforms/build-tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platform-tools" "platforms;android-${COMPILE_SDK}" "build-tools;${BUILD_TOOLS}"
+
+      - name: Install Gradle 7.6
+        uses: gradle/gradle-build-action@v3
+        with:
+          gradle-version: 7.6
+
+      - name: Build :app:assembleDebug
+        run: |
+          mkdir -p out/LOGS out/APK
+          gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee out/LOGS/gradle.log
+          shopt -s globstar nullglob
+          for f in app/build/outputs/**/*.apk app/build/outputs/**/*.aab; do cp -a "$f" out/APK/; done
+
+      - name: Upload LOGS artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.ref_name }}-${{ github.run_number }}
+          path: out/LOGS/**
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload APKs artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks-${{ github.ref_name }}-${{ github.run_number }}
+          path: out/APK/**
+          if-no-files-found: warn
+          retention-days: 30
