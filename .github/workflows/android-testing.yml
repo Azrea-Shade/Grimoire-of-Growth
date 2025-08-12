@@ -24,9 +24,16 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Install Android SDK 33 & build-tools 33.0.2
-        run: |
-          yes | sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+      # ✅ Reliable Android SDK provisioning (no manual sdkmanager path issues)
+      - name: Setup Android SDK (API 33, build-tools 33.0.2)
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 33
+          build-tools: 33.0.2
+          components: |-
+            platforms;android-33
+            build-tools;33.0.2
+            platform-tools
 
       - name: Build debug
         run: |

@@ -2,9 +2,7 @@ package com.azreashade.grimoireofgrowth.ui
 
 import android.util.Log
 
-/**
- * Temporary bridge so CI compiles. Replace with your real repo/ViewModel call later.
- */
+/** Temporary bridge to unblock CI; swap for real repository/ViewModel call later. */
 fun addHabit(name: String, dailyGoal: Int) {
     try {
         val clazz = Class.forName("com.azreashade.grimoireofgrowth.data.HabitRepository")
