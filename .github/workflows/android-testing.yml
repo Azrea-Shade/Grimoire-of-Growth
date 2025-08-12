@@ -2,57 +2,33 @@ name: Android CI (testing)
 
 on:
   push:
-    branches: [ "testing/v1.0.0" ]
-  workflow_dispatch:
+    branches: ["testing/v1.0.0"]
 
 jobs:
   build:
-    if: github.ref_name == 'testing/v1.0.0'
     runs-on: ubuntu-latest
     env:
       APP_MODULE: app
       LOG_DIR: out/LOGS
       APK_DIR: out/APK
-
     steps:
-      - name: Checkout testing branch
-        uses: actions/checkout@v4
-        with:
-          ref: testing/v1.0.0
+      - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 17
+      - name: Setup Java 17
         uses: actions/setup-java@v4
-      - name: Install Android SDK 33 & build-tools 33.0.2
-        run: |
-          yes | sdkmanager "platforms;android-33" "build-tools;33.0.2"
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
+          cache: gradle
 
-      - name: Install Android commandline tools
-        run: |
-          set -eux
-          SDK_ROOT=/usr/local/lib/android/sdk
-          sudo mkdir -p "$SDK_ROOT"
-          cd "$SDK_ROOT"
-          curl -fsSL -o cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          sudo unzip -q cmdtools.zip -d cmdline-tools
-          sudo mv cmdline-tools/cmdline-tools cmdline-tools/latest
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
-          echo "$SDK_ROOT/cmdline-tools/latest/bin:$SDK_ROOT/platform-tools" >> $GITHUB_PATH
-          yes | $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses
-
-      - name: Install platforms & build-tools
-        run: |
-          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-
-      - name: Install Gradle 7.6 (no cache)
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: 7.6
-          cache-disabled: true
 
-      - name: Build debug & capture log
+      - name: Install Android SDK 33 & build-tools 33.0.2
+        run: |
+          yes | sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
+
+      - name: Build debug
         run: |
           set -euxo pipefail
           mkdir -p "${LOG_DIR}" "${APK_DIR}"
@@ -62,27 +38,16 @@ jobs:
           cp -a ${APP_MODULE}/build/outputs/**/*.aab "${APK_DIR}/" || true
           ls -R out || true
 
-      - name: Upload LOGS (testing)
-        if: always()
+      - name: Upload LOGS
         uses: actions/upload-artifact@v4
         with:
-          name: logs-testing-v${{ github.run_number }}
-          path: ${{ env.LOG_DIR }}/**
+          name: LOGS
+          path: out/LOGS/**
           if-no-files-found: warn
-          retention-days: 30
 
-      - name: Upload APKs (testing)
-        if: always()
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: apks-testing-v${{ github.run_number }}
-          path: ${{ env.APK_DIR }}/**
+          name: APKs
+          path: out/APK/**
           if-no-files-found: warn
-          retention-days: 30
-
-      - name: Summary
-        if: always()
-        run: |
-          echo "### Artifacts & Paths" >> $GITHUB_STEP_SUMMARY
-          echo "- LOGS: \`${{ env.LOG_DIR }}/\`" >> $GITHUB_STEP_SUMMARY
-          echo "- APKs: \`${{ env.APK_DIR }}/\`" >> $GITHUB_STEP_SUMMARY
