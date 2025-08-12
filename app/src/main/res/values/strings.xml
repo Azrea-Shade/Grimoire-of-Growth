@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Grimoire of Growth</string>
+    <string name="open_settings">Settings</string>
+    <string name="sort_created">Created</string>
+    <string name="sort_last">Last</string>
+    <string name="sort_name">Name</string>
+    <string name="action_none">None</string>
+    <string name="action_complete">Complete</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_rename">Rename</string>
+</resources>

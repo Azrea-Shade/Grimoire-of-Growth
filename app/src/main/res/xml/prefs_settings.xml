@@ -1,0 +1,16 @@
+<preferences xmlns:android="http://schemas.android.com/apk/res/android">
+    <PreferenceCategory android:title="Display">
+        <ListPreference
+            android:key="pref_sort"
+            android:title="Sort order"
+            android:entries="@array/sort_entries"
+            android:entryValues="@array/sort_values"
+            android:defaultValue="created" />
+        <ListPreference
+            android:key="pref_swipe_action"
+            android:title="Swipe action"
+            android:entries="@array/swipe_entries"
+            android:entryValues="@array/swipe_values"
+            android:defaultValue="none" />
+    </PreferenceCategory>
+</preferences>

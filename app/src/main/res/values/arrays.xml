@@ -1,0 +1,24 @@
+<resources>
+    <string-array name="swipe_entries">
+        <item>@string/action_none</item>
+        <item>@string/action_complete</item>
+        <item>@string/action_delete</item>
+        <item>@string/action_rename</item>
+    </string-array>
+    <string-array name="swipe_values">
+        <item>none</item>
+        <item>complete</item>
+        <item>delete</item>
+        <item>rename</item>
+    </string-array>
+    <string-array name="sort_entries">
+        <item>@string/sort_created</item>
+        <item>@string/sort_last</item>
+        <item>@string/sort_name</item>
+    </string-array>
+    <string-array name="sort_values">
+        <item>created</item>
+        <item>last</item>
+        <item>name</item>
+    </string-array>
+</resources>
