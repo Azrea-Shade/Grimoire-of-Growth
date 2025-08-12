@@ -21,10 +21,10 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      # Uses the repo's Gradle Wrapper (now pinned to 8.7)
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # ✅ Reliable Android SDK provisioning (no manual sdkmanager path issues)
       - name: Setup Android SDK (API 33, build-tools 33.0.2)
         uses: android-actions/setup-android@v3
         with:
@@ -39,13 +39,16 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p "${LOG_DIR}" "${APK_DIR}"
-          gradle --no-daemon --stacktrace :${APP_MODULE}:assembleDebug 2>&1 | tee "${LOG_DIR}/gradle.log"
+          ./gradlew --no-daemon --stacktrace :${APP_MODULE}:assembleDebug 2>&1 | tee "${LOG_DIR}/gradle.log" || true
           shopt -s globstar nullglob
           cp -a ${APP_MODULE}/build/outputs/**/*.apk "${APK_DIR}/" || true
           cp -a ${APP_MODULE}/build/outputs/**/*.aab "${APK_DIR}/" || true
           ls -R out || true
+        # don't fail this step early; we still want artifacts in the next steps
+        continue-on-error: true
 
       - name: Upload LOGS
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: LOGS
@@ -53,8 +56,16 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload APKs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: APKs
           path: out/APK/**
           if-no-files-found: warn
+
+      # Re-fail the job if the build actually failed
+      - name: Fail if build failed
+        if: steps.build.outcome == 'failure'
+        run: |
+          echo "::error ::Gradle build failed — see LOGS artifact for details."
+          exit 1

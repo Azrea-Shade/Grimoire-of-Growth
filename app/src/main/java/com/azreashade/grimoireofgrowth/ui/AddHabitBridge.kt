@@ -2,7 +2,7 @@ package com.azreashade.grimoireofgrowth.ui
 
 import android.util.Log
 
-/** Temporary bridge to unblock CI; swap for real repository/ViewModel call later. */
+/** Temporary bridge to unblock CI; replace with real ViewModel/repo call later. */
 fun addHabit(name: String, dailyGoal: Int) {
     try {
         val clazz = Class.forName("com.azreashade.grimoireofgrowth.data.HabitRepository")
@@ -14,6 +14,6 @@ fun addHabit(name: String, dailyGoal: Int) {
         add.invoke(repo, name, Integer.valueOf(dailyGoal))
         Log.i("AddHabitBridge", "Repository addHabit invoked for '$name' ($dailyGoal)")
     } catch (t: Throwable) {
-        Log.w("AddHabitBridge", "Fallback addHabit (no repo wired yet): ${t.message}")
+        Log.w("AddHabitBridge", "Fallback addHabit (repo not wired): ${t.message}")
     }
 }
