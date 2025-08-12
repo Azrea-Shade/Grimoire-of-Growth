@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application") version "7.4.2"
     id("org.jetbrains.kotlin.android") version "1.8.22"
-    id("kotlin-kapt")
+    id("org.jetbrains.kotlin.kapt") version "1.8.22"
 }
 
 android {
@@ -32,11 +32,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+}
 
-    // also tell Kotlin toolchain 17 so kapt stops warning
-    kotlin {
-        jvmToolchain(17)
-    }
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {

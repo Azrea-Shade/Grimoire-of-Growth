@@ -41,7 +41,7 @@ jobs:
 
       - name: Install platforms & build-tools
         run: |
-          sdkmanager "platforms;android-33" "build-tools;33.0.2"
+          sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
       - name: Install Gradle 7.6 (no cache)
         uses: gradle/gradle-build-action@v3
