@@ -1,16 +1,17 @@
 package com.azreashade.grimoireofgrowth.ui
 
 import android.app.Application
-import androidx.lifecycle.*
-import com.azreashade.grimoireofgrowth.data.AppDatabase
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.asLiveData
+import androidx.lifecycle.viewModelScope
 import com.azreashade.grimoireofgrowth.data.HabitRepository
 import kotlinx.coroutines.launch
 
-class HabitViewModel(app: Application) : AndroidViewModel(app) {
-    private val repo = HabitRepository(AppDatabase.getInstance(app).habitDao())
-    val habits = repo.observeHabits().asLiveData()
+class HabitViewModel(app: Application): AndroidViewModel(app) {
+    private val repo = HabitRepository.from(app)
+    val habits = repo.observeAll().asLiveData()
 
-    fun addHabit(name: String, goal: Int) {
-        viewModelScope.launch { repo.add(name.trim(), goal) }
+    fun addSample() = viewModelScope.launch {
+        repo.addOrUpdate("Sample habit", 1)
     }
 }

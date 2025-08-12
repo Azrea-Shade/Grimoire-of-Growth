@@ -4,7 +4,7 @@ import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.azreashade.grimoireofgrowth.data.Habit
-import com.azreashade.grimoireofgrowth.databinding.ItemHabitBinding
+import com.azreashade.grimoireofgrowth.databinding.ListItemHabitBinding
 
 class HabitAdapter : RecyclerView.Adapter<HabitAdapter.VH>() {
     private val items = mutableListOf<Habit>()
@@ -15,18 +15,15 @@ class HabitAdapter : RecyclerView.Adapter<HabitAdapter.VH>() {
         notifyDataSetChanged()
     }
 
-    class VH(val b: ItemHabitBinding) : RecyclerView.ViewHolder(b.root)
+    class VH(val b: ListItemHabitBinding) : RecyclerView.ViewHolder(b.root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-        val b = ItemHabitBinding.inflate(LayoutInflater.from(parent.context), parent, false)
+        val b = ListItemHabitBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return VH(b)
     }
-
     override fun onBindViewHolder(holder: VH, position: Int) {
         val h = items[position]
-        holder.b.tvName.text = h.name
-        holder.b.tvGoal.text = "Daily goal: ${h.dailyGoal}"
+        holder.b.tvTitle.text = h.title
     }
-
-    override fun getItemCount() = items.size
+    override fun getItemCount(): Int = items.size
 }
