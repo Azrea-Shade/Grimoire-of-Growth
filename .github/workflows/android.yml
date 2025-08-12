@@ -6,12 +6,11 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # we push into ci-logs
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     env:
       JAVA_VERSION: "17"
 
@@ -31,12 +30,26 @@ jobs:
         run: |
           if [ -f gradlew ]; then chmod +x gradlew; fi
 
+      - name: Choose Gradle command
+        id: gcmd
+        shell: bash
+        run: |
+          if [ -x ./gradlew ]; then
+            echo "cmd=./gradlew" >> "$GITHUB_OUTPUT"
+            echo "Using Gradle wrapper."
+          else
+            echo "Gradle wrapper not found - installing Gradle via apt…"
+            sudo apt-get update -y
+            sudo apt-get install -y gradle
+            gradle -v
+            echo "cmd=gradle" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Detect Android application module
         id: detect
         shell: bash
         run: |
           set -e
-          # Find dirs that contain build.gradle[.kts]
           CANDS=$(git ls-files "*build.gradle" "*build.gradle.kts" 2>/dev/null | sed 's#/build\.gradle.*$##' | sort -u)
           APP=""
           for d in $CANDS; do
@@ -45,13 +58,8 @@ jobs:
               APP="$d"; break
             fi
           done
-          if [ -z "$APP" ]; then
-            if [ -d app ]; then APP="app"; fi
-          fi
-          if [ -z "$APP" ]; then
-            echo "No Android application module found."; exit 1
-          fi
-          echo "APP_MODULE=$APP" | tee -a "$GITHUB_ENV"
+          if [ -z "$APP" ] && [ -d app ]; then APP="app"; fi
+          if [ -z "$APP" ]; then echo "No Android application module found." ; exit 1 ; fi
           echo "module=$APP" >> "$GITHUB_OUTPUT"
           echo "Detected module: $APP"
 
@@ -61,22 +69,18 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p out/LOGS out/APK
-          # Build
-          ./gradlew ":${{ steps.detect.outputs.module }}:assembleDebug" --stacktrace --no-daemon 2>&1 | tee out/LOGS/gradle.log
-          # Copy produced APK/AABs
+          "${{ steps.gcmd.outputs.cmd }}" ":${{ steps.detect.outputs.module }}:assembleDebug" --stacktrace --no-daemon 2>&1 | tee out/LOGS/gradle.log
           shopt -s globstar nullglob
           APK_DIR="${{ steps.detect.outputs.module }}/build/outputs"
           count=0
-          for f in "$APK_DIR"/**/*.apk "$APK_DIR"/**/*.aab; do
-            cp -a "$f" out/APK/
-            count=$((count+1))
-          done
-          echo "apk_dir=$APK_DIR"       >> "$GITHUB_OUTPUT"
-          echo "log_dir=out/LOGS"       >> "$GITHUB_OUTPUT"
-          echo "mir_apk_count=$count"   >> "$GITHUB_OUTPUT"
+          for f in "$APK_DIR"/**/*.apk "$APK_DIR"/**/*.aab; do cp -a "$f" out/APK/ ; count=$((count+1)); done
+          echo "apk_dir=$APK_DIR"     >> "$GITHUB_OUTPUT"
+          echo "log_dir=out/LOGS"     >> "$GITHUB_OUTPUT"
+          echo "mir_apk_count=$count" >> "$GITHUB_OUTPUT"
           echo "Built $count package(s)."
 
       - name: Upload LOGS artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ github.run_number }}
@@ -85,6 +89,7 @@ jobs:
           retention-days: 30
 
       - name: Upload APKs artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: apks-${{ github.run_number }}
@@ -97,14 +102,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Try to read versionName from Gradle properties
-          VER=$(./gradlew ":${{ steps.detect.outputs.module }}:properties" -q | sed -n 's/^versionName: //p' | head -n1)
+          VER=$("${{ steps.gcmd.outputs.cmd }}" ":${{ steps.detect.outputs.module }}:properties" -q | sed -n 's/^versionName: //p' | head -n1 || true)
           [ -z "$VER" ] && VER="0.0.0"
           DATE=$(date -u +%Y-%m-%d)
           TIME=$(date -u +%H%M%SZ)
           SHORT_SHA="${GITHUB_SHA::7}"
           RUN_DIR="runs/v${VER}/${GITHUB_REF_NAME}/run-${GITHUB_RUN_NUMBER}_${TIME}_${SHORT_SHA}"
-          echo "value=$VER"    >> "$GITHUB_OUTPUT"
+          echo "value=$VER"      >> "$GITHUB_OUTPUT"
           echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
           echo "Version=$VER"
           echo "Run dir=$RUN_DIR"
@@ -114,26 +118,26 @@ jobs:
         shell: bash
         run: |
           set -e
+          RUN_DIR="${{ steps.ver.outputs.run_dir }}"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin ci-logs || true
-          git switch --create ci-logs origin/ci-logs || git switch ci-logs
+
+          # Make sure local ci-logs tracks remote
+          git fetch origin ci-logs:ci-logs || true
 
           WT=$(mktemp -d)
-          RUN_DIR="${{ steps.ver.outputs.run_dir }}"
+          # Create a worktree for ci-logs so we can commit safely
+          git worktree add --force "$WT" ci-logs
           mkdir -p "$WT/$RUN_DIR/LOGS" "$WT/$RUN_DIR/APK" "$WT/$RUN_DIR/REPO"
 
-          # Copy files gathered earlier
           cp -a out/LOGS/. "$WT/$RUN_DIR/LOGS/" 2>/dev/null || true
           cp -a out/APK/.  "$WT/$RUN_DIR/APK/"  2>/dev/null || true
 
-          # Zip current source snapshot into REPO/
           ZIP="$WT/$RUN_DIR/REPO/source-${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}.zip"
-          git ls-files -z | xargs -0 zip -q -@ "$ZIP"
+          ( cd "$GITHUB_WORKSPACE" && git ls-files -z | xargs -0 zip -q "$ZIP" )
 
-          ( cd "$WT" && git add "$RUN_DIR" )
-          git -C "$WT" commit -m "ci: ${GITHUB_REF_NAME} #${GITHUB_RUN_NUMBER} v${{ steps.ver.outputs.value }} (${GITHUB_SHA::7})" || true
-          git -C "$WT" push origin HEAD:ci-logs
+          ( cd "$WT" && git add "$RUN_DIR" && git commit -m "ci: ${GITHUB_REF_NAME} #${GITHUB_RUN_NUMBER} v${{ steps.ver.outputs.value }} (${GITHUB_SHA::7})" || true && git push origin HEAD:ci-logs )
+          git worktree remove "$WT" --force
 
       - name: Summary
         if: always()
@@ -142,4 +146,4 @@ jobs:
           echo "### Artifacts & Paths" >> "$GITHUB_STEP_SUMMARY"
           echo "- LOGS: \`out/LOGS/\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- APKs: \`out/APK/\`"  >> "$GITHUB_STEP_SUMMARY"
-          echo "- Mirrored to branch: \`ci-logs/${{ steps.ver.outputs.run_dir }}/\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mirrored to: \`ci-logs/${{ steps.ver.outputs.run_dir }}/\`" >> "$GITHUB_STEP_SUMMARY"
