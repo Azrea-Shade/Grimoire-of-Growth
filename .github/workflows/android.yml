@@ -2,107 +2,144 @@ name: Android CI (mvp → ci-logs + artifacts)
 
 on:
   push:
-    branches: [ "mvp" ]
+    branches: [ mvp ]
   workflow_dispatch:
 
 permissions:
-  contents: write
-
-env:
-  JAVA_VERSION: "17"
-  GRADLEW: "./gradlew"
-  LOGS_BRANCH: "ci-logs"
+  contents: write  # we push into ci-logs
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      JAVA_VERSION: "17"
+
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Temurin JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
 
-      - name: Make gradlew executable
-        run: chmod +x $GRADLEW || true
+      - name: Make gradlew executable (if present)
+        run: |
+          if [ -f gradlew ]; then chmod +x gradlew; fi
+
+      - name: Detect Android application module
+        id: detect
+        shell: bash
+        run: |
+          set -e
+          # Find dirs that contain build.gradle[.kts]
+          CANDS=$(git ls-files "*build.gradle" "*build.gradle.kts" 2>/dev/null | sed 's#/build\.gradle.*$##' | sort -u)
+          APP=""
+          for d in $CANDS; do
+            if grep -q "com.android.application" "$d/build.gradle" 2>/dev/null \
+            || grep -q "com.android.application" "$d/build.gradle.kts" 2>/dev/null; then
+              APP="$d"; break
+            fi
+          done
+          if [ -z "$APP" ]; then
+            if [ -d app ]; then APP="app"; fi
+          fi
+          if [ -z "$APP" ]; then
+            echo "No Android application module found."; exit 1
+          fi
+          echo "APP_MODULE=$APP" | tee -a "$GITHUB_ENV"
+          echo "module=$APP" >> "$GITHUB_OUTPUT"
+          echo "Detected module: $APP"
 
       - name: Build debug & capture log
-        id: buildstep
+        id: gradle
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p out/LOGS out/APK
-          $GRADLEW --no-daemon --stacktrace --info assembleDebug 2>&1 | tee out/LOGS/gradle.log
-
-          # Collect APK/AAB/JSON/XML from all modules
+          # Build
+          ./gradlew ":${{ steps.detect.outputs.module }}:assembleDebug" --stacktrace --no-daemon 2>&1 | tee out/LOGS/gradle.log
+          # Copy produced APK/AABs
           shopt -s globstar nullglob
-          for f in **/build/outputs/**/*.apk **/build/outputs/**/*.aab **/build/outputs/**/*.json **/build/outputs/**/*.xml; do
-            [ -f "$f" ] && cp -f "$f" out/APK/
+          APK_DIR="${{ steps.detect.outputs.module }}/build/outputs"
+          count=0
+          for f in "$APK_DIR"/**/*.apk "$APK_DIR"/**/*.aab; do
+            cp -a "$f" out/APK/
+            count=$((count+1))
           done
-          shopt -u globstar nullglob
-
-          # Compute version string
-          V=$(grep -RhoE 'versionName\s*"?=?"?[^"]+"' --include='build.gradle*' . | head -n1 | sed -E 's/.*versionName\s*"?=?"?([^"]+)".*/\1/' || true)
-          [ -z "$V" ] && V=$(git describe --tags --always 2>/dev/null || true)
-          [ -z "$V" ] && V="0.0.0"
-          echo "VERSION=$V" >> "$GITHUB_ENV"
-
-          {
-            echo "version: $V"
-            echo "branch:  ${GITHUB_REF_NAME}"
-            echo "commit:  ${GITHUB_SHA}"
-            echo "run:     ${GITHUB_RUN_NUMBER}"
-            echo "time:    $(date -u +%FT%TZ)"
-          } > out/LOGS/run-manifest.txt
+          echo "apk_dir=$APK_DIR"       >> "$GITHUB_OUTPUT"
+          echo "log_dir=out/LOGS"       >> "$GITHUB_OUTPUT"
+          echo "mir_apk_count=$count"   >> "$GITHUB_OUTPUT"
+          echo "Built $count package(s)."
 
       - name: Upload LOGS artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: logs-${{ github.run_number }}-v{{ env.VERSION }}
+          name: logs-${{ github.run_number }}
           path: out/LOGS/**
           if-no-files-found: warn
           retention-days: 30
 
       - name: Upload APKs artifact
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apks-${{ github.run_number }}-v{{ env.VERSION }}
+          name: apks-${{ github.run_number }}
           path: out/APK/**
           if-no-files-found: warn
           retention-days: 30
 
+      - name: Compute version + run dir
+        id: ver
+        shell: bash
+        run: |
+          set -e
+          # Try to read versionName from Gradle properties
+          VER=$(./gradlew ":${{ steps.detect.outputs.module }}:properties" -q | sed -n 's/^versionName: //p' | head -n1)
+          [ -z "$VER" ] && VER="0.0.0"
+          DATE=$(date -u +%Y-%m-%d)
+          TIME=$(date -u +%H%M%SZ)
+          SHORT_SHA="${GITHUB_SHA::7}"
+          RUN_DIR="runs/v${VER}/${GITHUB_REF_NAME}/run-${GITHUB_RUN_NUMBER}_${TIME}_${SHORT_SHA}"
+          echo "value=$VER"    >> "$GITHUB_OUTPUT"
+          echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
+          echo "Version=$VER"
+          echo "Run dir=$RUN_DIR"
+
       - name: Push LOGS + APKs to ci-logs
         if: always()
+        shell: bash
         run: |
-          set -euo pipefail
-          git ls-remote --exit-code --heads origin "${LOGS_BRANCH}"
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin ci-logs || true
+          git switch --create ci-logs origin/ci-logs || git switch ci-logs
 
-          DATE="$(date -u +%Y-%m-%d)"
-          TIME="$(date -u +%H%M%SZ)"
-          SHORT_SHA="${GITHUB_SHA::7}"
-          RUN_DIR="runs/v${VERSION}/${GITHUB_REF_NAME}/run-${GITHUB_RUN_NUMBER}_${TIME}_${SHORT_SHA}"
-          echo "RUN_DIR=${RUN_DIR}"
+          WT=$(mktemp -d)
+          RUN_DIR="${{ steps.ver.outputs.run_dir }}"
+          mkdir -p "$WT/$RUN_DIR/LOGS" "$WT/$RUN_DIR/APK" "$WT/$RUN_DIR/REPO"
 
-          git config user.name  "CI Bot"
-          git config user.email "ci-bot@users.noreply.github.com"
+          # Copy files gathered earlier
+          cp -a out/LOGS/. "$WT/$RUN_DIR/LOGS/" 2>/dev/null || true
+          cp -a out/APK/.  "$WT/$RUN_DIR/APK/"  2>/dev/null || true
 
-          WT="$(mktemp -d)"
-          git fetch origin "${LOGS_BRANCH}"
-          git worktree add -B "${LOGS_BRANCH}" "${WT}" "origin/${LOGS_BRANCH}"
+          # Zip current source snapshot into REPO/
+          ZIP="$WT/$RUN_DIR/REPO/source-${GITHUB_REF_NAME}-${GITHUB_RUN_NUMBER}.zip"
+          git ls-files -z | xargs -0 zip -q -@ "$ZIP"
 
-          mkdir -p "${WT}/${RUN_DIR}/LOGS" "${WT}/${RUN_DIR}/APK"
-          cp -a out/LOGS/. "${WT}/${RUN_DIR}/LOGS/" || true
-          if ls out/APK/* >/dev/null 2>&1; then
-            cp -a out/APK/. "${WT}/${RUN_DIR}/APK/" || true
-          else
-            echo "no debug APK/AAB produced in this run" > "${WT}/${RUN_DIR}/APK/README.txt"
-          fi
+          ( cd "$WT" && git add "$RUN_DIR" )
+          git -C "$WT" commit -m "ci: ${GITHUB_REF_NAME} #${GITHUB_RUN_NUMBER} v${{ steps.ver.outputs.value }} (${GITHUB_SHA::7})" || true
+          git -C "$WT" push origin HEAD:ci-logs
 
-          (cd "${WT}" && git add . && git commit -m "ci: ${GITHUB_REF_NAME} #${GITHUB_RUN_NUMBER} v${VERSION} (${GITHUB_SHA::7})" || true)
-          (cd "${WT}" && git push origin "${LOGS_BRANCH}")
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### Artifacts & Paths" >> "$GITHUB_STEP_SUMMARY"
+          echo "- LOGS: \`out/LOGS/\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- APKs: \`out/APK/\`"  >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mirrored to branch: \`ci-logs/${{ steps.ver.outputs.run_dir }}/\`" >> "$GITHUB_STEP_SUMMARY"
