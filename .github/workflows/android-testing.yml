@@ -43,7 +43,7 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
-      - name: Install Gradle 7.6 (direct)
+      - name: Install Gradle 7.6 (no cache)
         uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 7.6
@@ -76,3 +76,10 @@ jobs:
           path: ${{ env.APK_DIR }}/**
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Artifacts & Paths" >> $GITHUB_STEP_SUMMARY
+          echo "- LOGS: \`${{ env.LOG_DIR }}/\`" >> $GITHUB_STEP_SUMMARY
+          echo "- APKs: \`${{ env.APK_DIR }}/\`" >> $GITHUB_STEP_SUMMARY
