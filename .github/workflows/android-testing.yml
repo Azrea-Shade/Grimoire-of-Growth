@@ -43,7 +43,7 @@ jobs:
         run: |
           sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.2"
 
-      - name: Use Gradle 7.6 (no cache)
+      - name: Install Gradle 7.6 (direct)
         uses: gradle/gradle-build-action@v3
         with:
           gradle-version: 7.6
