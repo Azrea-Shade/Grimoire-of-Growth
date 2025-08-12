@@ -6,8 +6,11 @@
 
         <activity android:name=".ui.SettingsActivity" />
 
-        <!-- keep attributes on one line for exported-check -->
-        <activity android:name=".ui.MainActivity" android:exported="true">
+        <activity android:name=".ui.AddHabitActivity" />
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

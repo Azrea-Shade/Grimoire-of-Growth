@@ -11,6 +11,7 @@
         <item>delete</item>
         <item>rename</item>
     </string-array>
+
     <string-array name="sort_entries">
         <item>@string/sort_created</item>
         <item>@string/sort_last</item>

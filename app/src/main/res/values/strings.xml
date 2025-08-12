@@ -1,9 +1,19 @@
 <resources>
     <string name="app_name">Grimoire of Growth</string>
     <string name="open_settings">Settings</string>
+
+    <!-- Add habit -->
+    <string name="add_habit">Add habit</string>
+    <string name="habit_name">Habit name</string>
+    <string name="daily_goal_hint">Daily goal (number)</string>
+    <string name="save">Save</string>
+
+    <!-- Sorting options -->
     <string name="sort_created">Created</string>
     <string name="sort_last">Last</string>
     <string name="sort_name">Name</string>
+
+    <!-- Swipe actions -->
     <string name="action_none">None</string>
     <string name="action_complete">Complete</string>
     <string name="action_delete">Delete</string>
